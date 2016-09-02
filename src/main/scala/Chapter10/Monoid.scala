@@ -1,5 +1,7 @@
 package Chapter10
 
+import Chapter3.Tree
+
 
 trait Monoid[A] {
   def op(a1: A, a2: A): A
@@ -78,17 +80,25 @@ object Monoids {
   // Uses the PAR library we created ealier. Skip
 
   // Exercise 10.9
-  // Take an IndexedSeq, a Monoid and a comparison function
-  def isIndexedSeqOrdered[A](v: IndexedSeq[A], m: Monoid[Boolean])(compare: (A, A) => Boolean): Boolean = {
-    // Strategy - convert the seq into booleans, where each boolean checks if the element is ordered compared to its
-    // right neighbour. Using the AndBoolean monoid we can determine if the entire seq is ordered
+  // Note this checks iIntegers are in increasing order.
+  def isIndexedSeqOrdered(ints: IndexedSeq[Int]): Boolean = {
+    // op can compare two ints, but we need a piece of data to keep track if all previous comparisons were successful
+    // Use a Monoid[Int, Boolean], op will: if either have false return false, otherwise, check orderness
+    // To make this monoid we will have to foldMap converting each int, to int, true
+    val creativeMonoid = new Monoid[(Int, Boolean)] {
+      override def op(a1: (Int, Boolean), a2: (Int, Boolean)): (Int, Boolean) = {
+        if(a1._2 && a2._2) {
+          println(s"Comparing ${a1._1} <= ${a2._1}")
+          (a1._1, a1._1 <= a2._1) // ordered so far check orderedness
+        } else {
+          (a1._1, false) // one of the previous orderedness failed, keep going with false
+        }
+      }
+      override def zero: (Int, Boolean) = (Integer.MAX_VALUE, true)
+    }
 
-    // This seems stupid. Given a compare function we can just fail when it returns false. Why bother with the boolean
-    // monoid. I must be missing something, but monoids have no notion of comparison.
-    val bools = v.sliding(2).map { case (a, b) => compare(a, b) }
-    bools.foldRight(m.zero)(m.op)
+    foldMap[Int, (Int, Boolean)](ints.toList, creativeMonoid)( int => (int, true))._2
   }
-
 
 
   sealed trait WC
@@ -108,14 +118,86 @@ object Monoids {
     def zero = Part("", 0, "")
   }
 
-  def countWords(text: String, m: Monoid[WC]): Int = {
-    // Split text until left and right sides reach a maximum length
-    // Convert the string to a WC
-    // Use the Monoid to combine WCs
-    0
+  // Exercise 10.16
+  def productMonoid[A,B](A: Monoid[A], B: Monoid[B]): Monoid[(A,B)] = {
+    new Monoid[(A, B)] {
+      override def op(a1: (A, B), a2: (A, B)): (A, B) = (A.op(a1._1, a2._1), B.op(a1._2, a2._2))
+      override def zero: (A, B) = (A.zero, B.zero)
+    }
   }
 
+  // Exercise 10.17
+  def functionMonoid[A,B](B: Monoid[B]): Monoid[A => B] = {
+    new Monoid[(A) => B] {
+      override def op(a1: (A) => B, a2: (A) => B): (A) => B = A => B.op(a1(A), a2(A))
+      override def zero: (A) => B = A => B.zero
+    }
+  }
+
+  // Exercise 10.18
+  // No idea on this one!
+  def bag[A](as: IndexedSeq[A]): Map[A, Int] = ???
 
 }
+
+trait Foldable[F[_]] {
+  def foldRight[A,B](as: F[A])(z: B)(f: (A,B) => B): B
+  def foldLeft[A,B](as: F[A])(z: B)(f: (B,A) => B): B
+  def foldMap[A,B](as: F[A])(f: A => B)(mb: Monoid[B]): B
+  def concatenate[A](as: F[A])(m: Monoid[A]): A =
+    foldLeft(as)(m.zero)(m.op)
+  // Exericse 10.15
+  def toList[A](fa: F[A]): List[A] = foldRight(fa)(List[A]())( (a,b) => a :: b)
+}
+
+
+class FoldableList extends Foldable[List] {
+  override def foldRight[A, B](as: List[A])(z: B)(f: (A, B) => B): B = as.foldRight(z)(f)
+  override def foldLeft[A, B](as: List[A])(z: B)(f: (B, A) => B): B = as.foldLeft(z)(f)
+  override def foldMap[A, B](as: List[A])(f: (A) => B)(mb: Monoid[B]): B = foldLeft(as)(mb.zero)((b,a) => mb.op(b, f(a)))
+}
+
+
+class FoldableVector extends Foldable[Vector] {
+  override def foldRight[A, B](as: Vector[A])(z: B)(f: (A, B) => B): B = as.foldRight(z)(f)
+  override def foldLeft[A, B](as: Vector[A])(z: B)(f: (B, A) => B): B = as.foldLeft(z)(f)
+  override def foldMap[A, B](as: Vector[A])(f: (A) => B)(mb: Monoid[B]): B = foldLeft(as)(mb.zero)((b,a) => mb.op(b, f(a)))
+}
+
+
+class FoldableStream extends Foldable[Stream] {
+  override def foldRight[A, B](as: Stream[A])(z: B)(f: (A, B) => B): B = as.foldRight(z)(f)
+  override def foldLeft[A, B](as: Stream[A])(z: B)(f: (B, A) => B): B = as.foldLeft(z)(f)
+  override def foldMap[A, B](as: Stream[A])(f: (A) => B)(mb: Monoid[B]): B = foldLeft(as)(mb.zero)((b,a) => mb.op(b, f(a)))
+}
+
+// Exercise 10.13
+//class FoldableTree extends Foldable[Tree] {
+  // The old foldRight requires two functions, A => B and (B,B) => B, but monoid only supplies (A,B) => B
+//  override def foldRight[A, B](as: Tree[A])(z: B)(f: (A, B) => B): B = Tree.foldRight(as)
+//  override def foldLeft[A, B](as: Tree[A])(z: B)(f: (B, A) => B): B = as.foldLeft(z)(f)
+//  override def foldMap[A, B](as: Tree[A])(f: (A) => B)(mb: Monoid[B]): B = foldLeft(as)(mb.zero)((b,a) => mb.op(b, f(a)))
+//}
+
+
+// Exercise 10.14
+class FoldableOption extends Foldable[Option] {
+  override def foldRight[A, B](as: Option[A])(z: B)(f: (A, B) => B): B = as match {
+    case None => z
+    case Some(x) => f(x, z)
+  }
+
+  override def foldLeft[A, B](as: Option[A])(z: B)(f: (B, A) => B): B = as match {
+    case None => z
+    case Some(x) => f(z, x)
+  }
+
+  override def foldMap[A, B](as: Option[A])(f: (A) => B)(mb: Monoid[B]): B = as match {
+    case None => mb.zero
+    case Some(x) => mb.op(f(x), mb.zero)
+  }
+}
+
+
 
 
